@@ -153,7 +153,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 #feedback-status{overflow-wrap:anywhere}
 </style></head><body>
 <header><div class="header-heading"><h1>📻 ちゃっと放送局</h1><button class="new ghost" id="settings" aria-haspopup="dialog" aria-controls="settings-sheet">設定</button></div><div class="header-actions"><button class="new ghost" id="adm" hidden>管理</button><button class="new ghost" id="golive" hidden>🔴 ライブ</button><button class="new" id="open" hidden>配信する</button></div></header>
-<p id="update-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px"></p><div id="live"></div><section id="live-video-panel" aria-label="動画LIVEの映像" hidden><video id="camera-preview" autoplay muted playsinline aria-label="自分のカメラのプレビュー" hidden></video><img id="live-video-frame" alt="配信中のカメラ映像" hidden><p id="live-video-status" role="status"></p></section><div id="live-notice" class="m" role="status" style="max-width:640px;margin:auto;padding:0 14px"></div>
+<p id="update-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px"></p><p id="repair-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere"></p><div id="live"></div><section id="live-video-panel" aria-label="動画LIVEの映像" hidden><video id="camera-preview" autoplay muted playsinline aria-label="自分のカメラのプレビュー" hidden></video><img id="live-video-frame" alt="配信中のカメラ映像" hidden><p id="live-video-status" role="status"></p></section><div id="live-notice" class="m" role="status" style="max-width:640px;margin:auto;padding:0 14px"></div>
 <details style="max-width:640px;margin:8px auto;padding:0 14px;color:var(--sub);font-size:13px"><summary>ライブの接続状況</summary><div id="connection" role="status"></div><button class="del" id="reconnect">ライブ通信を再接続</button><p>全員が同じ添付メッセージから起動し、画面を開いたままお試しください。</p></details>
 <section id="live-feedback" aria-label="LIVEへの一言メッセージ" hidden><div class="card" style="display:block"><form id="feedback-form" hidden><label for="feedback-text">配信者へ一言（80文字まで）</label><textarea id="feedback-text" placeholder="聞こえています！" rows="2"></textarea><button id="feedback-send" type="submit">一言を送る</button><p id="feedback-status" class="m" role="status"></p><p class="m">LIVE中だけ届きます。履歴には保存しません。同じアプリのLIVE通信で送ります。個別チャットではありません。</p></form><div id="feedback-inbox" hidden><strong>視聴者からの一言</strong><p class="m">このLIVEの最新30件。表示名は送信端末の申告です。</p><div id="feedback-messages" role="log" aria-live="polite"></div></div></div></section>
 <main id="list"></main>
@@ -161,7 +161,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 <p class="m">新版へ移る前に放送一覧を書き出し、新版でオーナーが取り込んでください。LIVEは全員が移行先の同じ添付から起動すると聴けます。</p>
 <div class="row"><button id="archive-export">放送一覧を書き出す</button><button id="archive-import">放送一覧を取り込む</button></div>
 <input id="archive-file" type="file" accept=".json,application/json" hidden>
-<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.3</p></div></div>
+<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.4</p></div></div>
 
 <div id="player"><div class="pr">
  <button id="pp" aria-label="再生/一時停止">▶</button>
@@ -240,6 +240,58 @@ const visible=t=>canAtSequence(t.addr,t.seq)&&canAtSequence(t.addr,t.lastSeq??t.
 /* 判定には送信者の時計・過去のgrantでなく、ホストの更新順序を使う。 */
 const gone=t=>{const s=dels.get(t.id);if(!s)return false;const o=owner();return s.has(t.addr)||!!(o&&s.has(o.addr))};
 function later(){if(!pending){pending=true;requestAnimationFrame(()=>{pending=false;render()})}}
+const repairRequests=new Map(),requestCooldown=new Map(),outgoing=new Map();let repairBusy=false;
+const repairStatus=message=>$("#repair-status").textContent=message;
+function missingParts(t){const out=[];for(let i=0;i<t.n;i++)if(t.parts[i]===undefined)out.push(i);return out}
+function repairList(t){return [...(repairRequests.get(t.id)?.values()||[])].filter(r=>r.ts===t.ts&&r.n===t.n)}
+function receiveRepairRequest(p,serial){
+ const t=tracks.get(p.track);if(!t||gone(t)||typeof p.addr!=="string"||p.addr.length>300||typeof p.rid!=="string"||p.rid.length>100||p.n!==t.n||p.ts!==t.ts||!Array.isArray(p.missing)||!p.missing.length||p.missing.length>t.n||p.missing.some(i=>!Number.isInteger(i)||i<0||i>=t.n))return;
+ if(!repairRequests.has(t.id))repairRequests.set(t.id,new Map());const requests=repairRequests.get(t.id),previous=requests.get(p.addr);
+ if((!previous||serial>previous.serial)&&(requests.has(p.addr)||requests.size<100))requests.set(p.addr,{...p,missing:[...new Set(p.missing)],serial});
+}
+function openOutbox(){return new Promise(resolve=>{
+ let settled=false;const timer=setTimeout(()=>finish(null),1500);function finish(db){if(settled){db?.close();return}settled=true;clearTimeout(timer);resolve(db)}
+ if(!window.indexedDB)return finish(null);
+ let request;try{request=indexedDB.open("chatto-broadcast-outbox-v1",1)}catch(e){return finish(null)}
+ request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains("uploads"))request.result.createObjectStore("uploads")};
+ request.onsuccess=()=>finish(request.result);request.onerror=()=>finish(null);request.onblocked=()=>finish(null);
+})}
+async function saveOutgoing(record){
+ outgoing.set(record.meta.id,record);const db=await openOutbox();if(!db)return false;
+ return new Promise(resolve=>{try{const tx=db.transaction("uploads","readwrite");tx.objectStore("uploads").put(record,me()+":"+record.meta.id);tx.oncomplete=()=>{db.close();resolve(true)};tx.onerror=tx.onabort=()=>{db.close();resolve(false)}}catch(e){db.close();resolve(false)}});
+}
+async function loadOutgoing(id){
+ if(outgoing.has(id))return outgoing.get(id);const db=await openOutbox();if(!db)return null;
+ return new Promise(resolve=>{try{const tx=db.transaction("uploads","readonly"),r=tx.objectStore("uploads").get(me()+":"+id);r.onsuccess=()=>{db.close();resolve(r.result||null)};r.onerror=()=>{db.close();resolve(null)}}catch(e){db.close();resolve(null)}});
+}
+async function requestRepair(id){
+ const t=tracks.get(id);if(!t||gone(t)||!visible(t)||t.got===t.n)return;
+ if(Date.now()-(requestCooldown.get(id)||0)<60000)return repairStatus("再送依頼は1分以上空けてください。配信元の画面を開いて確認してもらってください。");
+ requestCooldown.set(id,Date.now());repairStatus("再送依頼を送信中…");later();
+ try{await sendUpdate({payload:{k:"repair-request",track:id,addr:me(),rid:Date.now().toString(36)+Math.random().toString(36).slice(2),n:t.n,ts:t.ts,missing:missingParts(t)}},"「"+String(t.title||"放送").slice(0,25)+"」の不足データ再送依頼");repairStatus("不足データの再送を依頼しました。配信元で同じ添付を開き、「再送」を押してもらってください。")}
+ catch(e){requestCooldown.delete(id);repairStatus("再送依頼を送れませんでした："+(e.message||e))}finally{later()}
+}
+async function resendTrack(id){
+ const t=tracks.get(id);if(!t||t.addr!==me()||!can(me(),Infinity)||gone(t)||!visible(t))return;
+ if(repairBusy||sending||archiveBusy)return repairStatus("送信・取り込みが終わってから再送してください。");
+ repairBusy=true;repairStatus("再送するデータを確認中…");later();
+ try{
+  const requests=repairList(t),indices=requests.length?[...new Set(requests.flatMap(r=>r.missing))].sort((a,b)=>a-b):Array.from({length:t.n},(_,i)=>i);
+  const saved=await loadOutgoing(id);let packets;
+  if(saved&&saved.meta.addr===me()&&saved.meta.n===t.n&&saved.meta.ts===t.ts){
+   const bytes=new Uint8Array(saved.bytes);packets=indices.map(i=>({...saved.meta,i,d:b64(bytes.subarray(i*saved.chunkSize,(i+1)*saved.chunkSize))}));
+  }else{
+   if(indices.some(i=>t.parts[i]===undefined))throw Error("この端末に不足分の元データがありません。元の音声・動画ファイルを選び直し、新しい放送として配信してください。完了を確認してから古い未完了放送を削除します");
+   packets=indices.map(i=>({id:t.id,i,n:t.n,title:t.title,by:t.by,addr:t.addr,dur:t.dur,mime:t.mime,kind:t.kind,grant:t.grant??null,ts:t.ts,d:t.parts[i]}));
+  }
+  for(let j=0;j<packets.length;j++){
+   repairStatus("再送中 "+(j+1)+"/"+packets.length+"件。画面を開いたままお待ちください。");
+   await sendUpdate({payload:packets[j]},"",()=>can(me(),Infinity)&&!gone(t));
+  }
+  if(requests.length)await sendUpdate({payload:{k:"repair-done",track:id,addr:me(),rids:requests.map(r=>r.rid)}},"",()=>can(me(),Infinity)&&!gone(t));
+  repairStatus(packets.length+"件を再送しました。これは視聴端末の受信完了を示すものではありません。視聴側で▶が表示され、再生できるか確認してください。");
+ }catch(e){repairStatus("再送が止まりました："+(e.message||e)+"。復旧後に再送できます。")}finally{repairBusy=false;later()}
+}
 const historyReady=webxdc.setUpdateListener(u=>{
   const p=u.payload; if(!p||typeof p!=="object") return; seq=Math.max(seq+1,Number.isSafeInteger(u.serial)?u.serial:0);
   const updateSeq=Number.isSafeInteger(u.serial)?u.serial:seq;
@@ -250,6 +302,10 @@ const historyReady=webxdc.setUpdateListener(u=>{
     liveNotices.set(p.addr+":"+p.sid,p);
   }
   else if(p.k==="liveend"&&typeof p.addr==="string"){endedLives.add(p.addr+":"+p.sid)}
+  else if(p.k==="repair-request"){receiveRepairRequest(p,updateSeq)}
+  else if(p.k==="repair-done"){
+    const t=tracks.get(p.track);if(t&&p.addr===t.addr&&can(p.addr,Infinity)&&Array.isArray(p.rids)&&p.rids.length<=100){const requests=repairRequests.get(t.id);if(requests)for(const [addr,r] of requests)if(p.rids.includes(r.rid)&&r.serial<updateSeq)requests.delete(addr)}
+  }
   else if(p.id&&p.del){if(!dels.has(p.id))dels.set(p.id,new Set());dels.get(p.id).add(p.addr)}
   else if(p.id){
     if(typeof p.id!=="string"||!Number.isInteger(p.n)||p.n<1||p.n>1000||!Number.isInteger(p.i)||p.i<0||p.i>=p.n||typeof p.d!=="string"||p.d.length>128000||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(p.d)||!Number.isFinite(p.ts))return;
@@ -259,6 +315,7 @@ const historyReady=webxdc.setUpdateListener(u=>{
     if(!t){t={id:p.id,n:p.n,title:p.title,by:p.by,addr:p.addr,dur:p.dur,mime:p.mime,ts:p.ts,grant:p.grant,kind,seq:updateSeq,lastSeq:updateSeq,parts:[],got:0,bytes:0};tracks.set(p.id,t)}
     if(t.n!==p.n||t.addr!==p.addr||t.ts!==p.ts||t.kind!==kind||t.mime!==p.mime)return;
     if(t.parts[p.i]===undefined){t.seq=Math.min(t.seq,updateSeq);t.lastSeq=Math.max(t.lastSeq,updateSeq);const size=p.d.length/4*3-(p.d.endsWith("==")?2:p.d.endsWith("=")?1:0);if(t.bytes+size>maxBytes(kind))return;t.bytes+=size;t.parts[p.i]=p.d;t.got++}
+    if(t.got===t.n&&requestCooldown.has(t.id)){requestCooldown.delete(t.id);repairStatus("「"+String(t.title||"放送")+"」の受信が完了しました。▶から再生できます。")}
   } else return;
   later();
 },0);
@@ -282,9 +339,10 @@ function render(){
   else{
     if(!canPost)h+=`<div class="m" style="text-align:center;margin:8px 0">配信できるのは、オーナー（${esc(o.name)}）が許可した人だけです。</div>`;
     h+=all.length?all.map(t=>{
-      const ok=t.got===t.n,del=t.addr===me()||mine;
-      return `<div class="card ${cur===t.id?"on":""}"><button class="pb" data-id="${esc(t.id)}" ${ok?"":"disabled"} aria-label="再生">${ok?(cur===t.id&&!(isVideo(t)?video:audio).paused?"❚❚":"▶"):Math.round(t.got/t.n*100)+"%"}</button>
-      <div style="min-width:0"><div class="t"><span class="media-kind">${isVideo(t)?"動画":"音声"}</span>${esc(t.title)}</div><div class="m">${esc(t.by)}・${when(t.ts)}・${fmt(t.dur)}${ok?"":"・受信中"}</div></div>${del?`<button class="del ${armed===t.id?"arm":""}" data-del="${esc(t.id)}">${armed===t.id?"本当に削除":"削除"}</button>`:""}</div>`}).join("")
+      const ok=t.got===t.n,del=t.addr===me()||mine,requests=repairList(t);
+      const recovery=(!ok?'<button class="del" data-request="'+esc(t.id)+'">不足分の再送を依頼</button>':'')+(t.addr===me()&&canPost?'<button class="del" data-resend="'+esc(t.id)+'" '+(repairBusy?'disabled':'')+'>再送</button>':'');
+      return `<div class="card ${cur===t.id?"on":""}"><button class="pb" data-id="${esc(t.id)}" ${ok?"":"disabled"} aria-label="再生">${ok?(cur===t.id&&!(isVideo(t)?video:audio).paused?"❚❚":"▶"):Math.min(99,Math.floor(t.got/t.n*100))+"%"}</button>
+      <div style="min-width:0"><div class="t"><span class="media-kind">${isVideo(t)?"動画":"音声"}</span>${esc(t.title)}</div><div class="m">${esc(t.by)}・${when(t.ts)}・${fmt(t.dur)}${ok?"":"・受信中 "+t.got+"/"+t.n+"件（不足"+(t.n-t.got)+"件）"}</div>${requests.length?`<div class="m">再送依頼あり：${requests.length}端末</div>`:""}${recovery?`<div class="row" style="flex-wrap:wrap;margin-top:8px">${recovery}</div>`:""}</div>${del?`<button class="del ${armed===t.id?"arm":""}" data-del="${esc(t.id)}">${armed===t.id?"本当に削除":"削除"}</button>`:""}</div>`}).join("")
     :`<div class="empty"><b>まだ放送がありません</b>${canPost?"右上の「配信する」から最初の放送を届けましょう。":"許可された人の放送がここに並びます。"}</div>`;
   }
   $("#list").innerHTML=h;
@@ -302,6 +360,8 @@ $("#aclose").onclick=()=>$("#sheet2").classList.remove("show");
 $("#mlist").onclick=e=>{const b=e.target.closest("[data-a]");if(!b||!isOwner())return;if(b.disabled)return;b.disabled=true;b.textContent="設定を反映中…";const a=b.dataset.a,on=b.dataset.on==="1",n=members.get(a)||"";
   Promise.resolve(sendUpdate({payload:{k:"role",by:me(),target:a,on,name:n,ts:Math.max(Date.now(),...roles.map(e=>(e.ts||0)+1)),rid:Date.now().toString(36)+Math.random().toString(36).slice(2)}},on?`${n}さんが配信者になりました`:"")).catch(()=>{renderAdmin();alert("設定に失敗しました")})};
 $("#list").onclick=e=>{
+  const request=e.target.closest("[data-request]");if(request){requestRepair(request.dataset.request);return}
+  const resend=e.target.closest("[data-resend]");if(resend){resendTrack(resend.dataset.resend);return}
   if(e.target.closest("#found")){const button=e.target.closest("#found");if(button.disabled)return;button.disabled=true;button.textContent="放送局を開設中…";const n=webxdc.selfName||"だれか";
     Promise.resolve(sendUpdate({payload:{k:"open",addr:me(),name:n,ts:Date.now()}},`📻 ${n}さんが放送局を開設しました`)).catch(()=>{button.disabled=false;button.textContent="放送局を開設する";alert("開設に失敗しました")});return}
   const d=e.target.closest(".del");
@@ -727,7 +787,7 @@ for(const media of [audio,video,$("#prev"),videoPrev])media.addEventListener("pl
 let sending=false;
 function b64(u){let s="";for(let i=0;i<u.length;i+=8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+8000));return btoa(s)}
 $("#send").onclick=async()=>{
-  if(!draft||sending||archiveBusy)return;
+  if(!draft||sending||archiveBusy||repairBusy)return;
   if(!can(me(),Infinity)){err("配信する権限がありません。オーナーに依頼してください。");return}
   const title=$("#title").value.trim()||"無題の放送", by=webxdc.selfName||"だれか";
   sending=true;const upload=draft;$("#prev").pause();videoPrev.pause();["#rec","#pick","#pick-video","#cancel"].forEach(s=>$(s).disabled=true);
@@ -736,6 +796,9 @@ $("#send").onclick=async()=>{
   const buf=new Uint8Array(await upload.blob.arrayBuffer());
   const n=Math.ceil(buf.length/CH), id=Date.now().toString(36)+Math.random().toString(36).slice(2,6), ts=Date.now();
   let grant=null;for(const e of roles)if(e.by===owner()?.addr&&e.target===me()&&e.on&&(!grant||roleKey(e)>roleKey(grant)))grant=e;
+  const meta={id,n,title,by,addr:me(),dur:upload.dur,mime:upload.mime,kind:upload.kind||"audio",grant:grant?.rid||null,ts};
+  const kept=await saveOutgoing({meta,chunkSize:CH,bytes:buf});
+  if(!kept)repairStatus("再送用データはこの画面を開いている間だけ保持します。送信が終わるまで閉じないでください。");
   for(let i=0;i<n;i++){
     $("#send").textContent=`送信中 ${i+1}/${n}`;
     await sendUpdate({payload:{id,i,n,title,by,addr:me(),dur:upload.dur,mime:upload.mime,kind:upload.kind||"audio",grant:grant?.rid||null,ts,d:b64(buf.subarray(i*CH,(i+1)*CH))}},i===n-1?`📻 ${by}：${title}`:"",()=>can(me(),Infinity));
@@ -766,7 +829,7 @@ function makeArchive(){
   const all=[...tracks.values()].filter(t=>!gone(t)&&visible(t));
   const complete=all.filter(t=>t.got===t.n);
   if(!complete.length)throw Error("書き出せる受信完了済みの放送がありません");
-  return {format:"chatto-radio-archive",schema:complete.some(isVideo)?2:1,created:Date.now(),appVersion:"1.6.3",incomplete:all.length-complete.length,
+  return {format:"chatto-radio-archive",schema:complete.some(isVideo)?2:1,created:Date.now(),appVersion:"1.6.4",incomplete:all.length-complete.length,
     tracks:complete.map(t=>({id:t.id,title:t.title,by:t.by,ts:t.ts,dur:Number.isFinite(t.dur)?t.dur:0,mime:t.mime,kind:isVideo(t)?"video":"audio",parts:t.parts.slice()}))};
 }
 function validateArchive(value){
@@ -788,7 +851,7 @@ function validateArchive(value){
 }
 function setArchiveBusy(on){archiveBusy=on;["#archive-export","#archive-import","#send","#open","#rec","#pick","#pick-video","#golive"].forEach(s=>$(s).disabled=on);if(!on){$("#send").disabled=!draft;$("#archive-import").disabled=!isOwner()}}
 $("#archive-export").onclick=async()=>{
-  if(archiveBusy||sending||rec||recStarting||liveStarting)return archiveStatus("録音・送信処理が終わってからお試しください");
+  if(archiveBusy||sending||repairBusy||rec||recStarting||liveStarting)return archiveStatus("録音・送信処理が終わってからお試しください");
   try{
     if(!webxdc.sendToChat)throw Error("このDelta Chatでは書き出しを利用できません");
     const backup=makeArchive(),plainText=JSON.stringify(backup);
@@ -798,7 +861,7 @@ $("#archive-export").onclick=async()=>{
   }catch(e){archiveStatus("書き出しに失敗しました："+(e.message||e))}
 };
 async function restoreArchive(file){
-  if(archiveBusy)return;
+  if(archiveBusy||repairBusy)return;
   if(!isOwner())return archiveStatus("移行先の放送局を開設したオーナーだけが取り込めます");
   if(sending||rec||recStarting||myLive||lst||liveStarting)return archiveStatus("録音・配信・聴取・送信を終了してから取り込んでください");
   let done=0,skipped=0;setArchiveBusy(true);
