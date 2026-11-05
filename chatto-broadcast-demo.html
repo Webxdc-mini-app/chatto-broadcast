@@ -158,7 +158,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 </style></head><body>
 <header><div class="header-heading"><h1>📻 ちゃっと放送局</h1><button class="new ghost" id="settings" aria-haspopup="dialog" aria-controls="settings-sheet">設定</button></div><div class="header-actions"><button class="new ghost" id="adm" hidden>管理</button><button class="new ghost" id="golive" hidden>🔴 ライブ</button><button class="new" id="open" hidden>配信する</button></div></header>
 <section id="station-identity" aria-label="放送局の情報" hidden><strong id="station-label"></strong><span id="station-owner" class="m"></span></section>
-<p id="update-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px"></p><p id="repair-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere"></p><div id="live"></div><section id="live-video-panel" aria-label="動画LIVEの映像" hidden><video id="camera-preview" autoplay muted playsinline aria-label="自分のカメラのプレビュー" hidden></video><img id="live-video-frame" alt="配信中のカメラ映像" hidden><p id="live-video-status" role="status"></p></section><div id="live-notice" class="m" role="status" style="max-width:640px;margin:auto;padding:0 14px"></div>
+<p id="update-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px"></p><p id="repeat-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere"></p><p id="repair-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere"></p><div id="live"></div><section id="live-video-panel" aria-label="動画LIVEの映像" hidden><video id="camera-preview" autoplay muted playsinline aria-label="自分のカメラのプレビュー" hidden></video><img id="live-video-frame" alt="配信中のカメラ映像" hidden><p id="live-video-status" role="status"></p></section><div id="live-notice" class="m" role="status" style="max-width:640px;margin:auto;padding:0 14px"></div>
 <details style="max-width:640px;margin:8px auto;padding:0 14px;color:var(--sub);font-size:13px"><summary>ライブの接続状況</summary><div id="connection" role="status"></div><button class="del" id="reconnect">ライブ通信を再接続</button><p>全員が同じ添付メッセージから起動し、画面を開いたままお試しください。</p></details>
 <section id="live-feedback" aria-label="LIVEへの一言メッセージ" hidden><div class="card" style="display:block"><form id="feedback-form" hidden><label for="feedback-text">配信者へ一言（80文字まで）</label><textarea id="feedback-text" placeholder="聞こえています！" rows="2"></textarea><button id="feedback-send" type="submit">一言を送る</button><p id="feedback-status" class="m" role="status"></p><p class="m">LIVE中だけ届きます。履歴には保存しません。同じアプリのLIVE通信で送ります。個別チャットではありません。</p></form><div id="feedback-inbox" hidden><strong>視聴者からの一言</strong><p class="m">このLIVEの最新30件。表示名は送信端末の申告です。</p><div id="feedback-messages" role="log" aria-live="polite"></div></div></div></section>
 <main id="list"></main>
@@ -169,7 +169,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 <p class="m">新版へ移る前に放送一覧を書き出し、新版でオーナーが取り込んでください。LIVEは全員が移行先の同じ添付から起動すると聴けます。</p>
 <div class="row"><button id="archive-export">放送一覧を書き出す</button><button id="archive-import">放送一覧を取り込む</button></div>
 <input id="archive-file" type="file" accept=".json,application/json" hidden>
-<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.5</p></div></div>
+<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.7</p></div></div>
 
 <div id="found-sheet" role="dialog" aria-modal="true" aria-labelledby="found-title"><form id="found-form" class="panel">
 <h2 id="found-title">放送局を開設する</h2><label for="found-name">放送局名（40文字まで）</label><input id="found-name" type="text" maxlength="80" placeholder="例：中央避難所・公式" required>
@@ -684,7 +684,7 @@ $("#lstart").onclick=async()=>{
   src.connect(proc);proc.connect(cctx.destination);
   let canvas=null,canvasContext=null;
   if(useCamera){canvas=document.createElement("canvas");canvasContext=canvas.getContext("2d");if(!canvasContext||typeof canvas.toBlob!=="function")throw Error("この端末はカメラ映像の配信処理に対応していません")}
-  myLive={sid,title,t0:Date.now(),muted:false,stream,cctx,proc,src,frames:0,camera:useCamera,videoFrames:0,videoSequence:0,videoTimer:0,frameBusy:false,canvas,canvasContext,videoError:""};
+  myLive={sid,title,name,t0:Date.now(),muted:false,stream,cctx,proc,src,frames:0,camera:useCamera,videoFrames:0,videoSequence:0,videoTimer:0,frameBusy:false,canvas,canvasContext,videoError:""};
   if(useCamera){cameraPreview.srcObject=stream;cameraPreview.muted=true;resumeCamera()}
   Promise.resolve(sendUpdate({payload:{k:"live",sid,addr:me(),name,title,camera:useCamera,ts:Date.now()}},`🔴 ${name}さんのライブ配信が始まりました：${title}`,()=>can(me(),Infinity)&&myLive?.sid===sid)).catch(()=>{});
   rsend(ctl({t:"b",sid,addr:me(),name,title,n:0,camera:useCamera}));
@@ -700,7 +700,7 @@ function endLive(){const L=myLive;if(!L)return;myLive=null;
   clearTimeout(L.videoTimer);if(L.camera){cameraPreview.pause();cameraPreview.srcObject=null;if(L.canvas){L.canvas.width=1;L.canvas.height=1}}
   for(const clean of [()=>L.proc.disconnect(),()=>L.src.disconnect(),()=>L.cctx.close(),()=>L.stream.getTracks().forEach(t=>t.stop())])try{clean()}catch(e){}
   [0,300,700].forEach(ms=>setTimeout(()=>rsend(ctl({t:"e",sid:L.sid})),ms)); /* 取りこぼし対策で3回送る */
-  Promise.resolve(sendUpdate({payload:{k:"liveend",sid:L.sid,addr:me(),ts:Date.now()}},"")).catch(()=>{});renderLive()}
+  Promise.resolve(sendUpdate({payload:{k:"liveend",sid:L.sid,addr:me(),name:L.name,title:L.title,ts:Date.now()}},`⚫ ${L.name||webxdc.selfName||"だれか"}さんのライブ配信が終了しました：${L.title}`)).catch(()=>{rtError="ライブは終了しましたが、チャットへの終了通知を送信できませんでした。必要に応じてチャットで終了を伝えてください";renderConnection()});renderLive()}
 addEventListener("pagehide",endLive);
 setInterval(()=>{if(live&&Date.now()-live.last>TTL){stopListen();live=null}
   if(myLive)rsend(ctl({t:"b",sid:myLive.sid,addr:me(),name:webxdc.selfName||"だれか",title:myLive.title,n:cnt(),camera:myLive.camera}));
@@ -717,10 +717,32 @@ function mediaFailure(e){
 }
 /* ---- 再生 ---- */
 // この端末の収録再生だけに適用。LIVE・録音プレビューには適用しない。
+let repeatEnabled=false;
+const manualRepeat=/iPad|iPhone|iPod/.test(navigator.userAgent||"")||(/Mac/.test(navigator.platform||"")&&navigator.maxTouchPoints>1);
 function setRepeat(enabled){
-  audio.loop=video.loop=!!enabled;
-  $("#audio-repeat").checked=$("#video-repeat").checked=!!enabled;
+  repeatEnabled=!!enabled;
+  // iOS WebViewではnative loopに依存せず、同じ再生要素を終了時に巻き戻す。
+  audio.loop=video.loop=repeatEnabled&&!manualRepeat;
+  $("#audio-repeat").checked=$("#video-repeat").checked=repeatEnabled;
+  $("#repeat-status").textContent="";
 }
+const repeatRestarting=new WeakSet();
+function repeatEnded(media){
+ const id=cur,t=tracks.get(id);
+ if(!repeatEnabled||!t||!t.url||media.src!==t.url||gone(t)||!visible(t)||lst||myLive||media!==(isVideo(t)?video:audio)||repeatRestarting.has(media))return;
+ if(media===video&&!$("#video-sheet").classList.contains("show"))return;
+ repeatRestarting.add(media);const url=media.src;
+ const failed=()=>{
+  if(cur!==id||media.src!==url)return;
+  setRepeat(false);const message="繰り返し再生を開始できませんでした。▶を押して再生し、リピートをもう一度選んでください。";$("#repeat-status").textContent=message;if(media===video)$("#video-error").textContent=message;
+ };
+ try{
+  media.currentTime=0;
+  Promise.resolve(media.play()).catch(failed).finally(()=>repeatRestarting.delete(media));
+ }catch(e){repeatRestarting.delete(media);failed()}
+}
+audio.addEventListener("ended",()=>repeatEnded(audio));
+video.addEventListener("ended",()=>repeatEnded(video));
 $("#audio-repeat").onchange=e=>setRepeat(e.target.checked);
 $("#video-repeat").onchange=e=>setRepeat(e.target.checked);
 setRepeat(false);
