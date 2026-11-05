@@ -49,7 +49,7 @@ if(!window.webxdc){(()=>{
   const link=document.createElement("a"),url=new URL(location.href);url.searchParams.set("preview",token());
   link.href=url.href;link.target="_blank";link.rel="noopener";link.textContent="別の視聴タブを開く";link.style.color="#ff985c";box.append(link);
   const help=document.createElement("p");help.textContent="最初のタブで放送局を開設 → ライブ → 動画LIVE（実験） → ライブ開始。カメラ・マイクを許可します。別タブのLIVE欄の▶で視聴できます。自分のカメラ映像は配信タブにも表示されます。";box.append(help);
-  if(!isSecureContext||!navigator.locks?.request||storageError){const warning=document.createElement("p");warning.textContent="この開き方では機器や履歴共有を利用できない場合があります。同梱のブラウザプレビュー起動.cmdからlocalhostで開いてください。"+(storageError?" 保存エラー："+storageError:"");box.append(warning)}
+  if(!isSecureContext||!navigator.locks?.request||storageError){const warning=document.createElement("p");warning.textContent="この開き方では機器や履歴共有を利用できない場合があります。別タブ間のデモは同じPC・同じブラウザで開き、共有できない場合はDelta Chat版でお試しください。"+(storageError?" 保存エラー："+storageError:"");box.append(warning)}
   document.querySelector("header").after(box);
  });
 
@@ -151,18 +151,31 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 #feedback-send{min-height:44px;margin-top:8px}
 #feedback-messages{max-height:240px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 #feedback-status{overflow-wrap:anywhere}
+#station-identity{max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere}
+#station-label{display:block;font-size:20px}#station-owner{display:block;margin-top:4px}
+#found-sheet{position:fixed;inset:0;z-index:21;background:rgba(0,0,0,.6);display:none;align-items:flex-end}
+#found-sheet.show{display:flex}#found-sheet .panel{max-height:90dvh;overflow-y:auto}
 </style></head><body>
 <header><div class="header-heading"><h1>📻 ちゃっと放送局</h1><button class="new ghost" id="settings" aria-haspopup="dialog" aria-controls="settings-sheet">設定</button></div><div class="header-actions"><button class="new ghost" id="adm" hidden>管理</button><button class="new ghost" id="golive" hidden>🔴 ライブ</button><button class="new" id="open" hidden>配信する</button></div></header>
+<section id="station-identity" aria-label="放送局の情報" hidden><strong id="station-label"></strong><span id="station-owner" class="m"></span></section>
 <p id="update-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px"></p><p id="repair-status" class="m" role="status" style="max-width:640px;margin:8px auto;padding:0 14px;overflow-wrap:anywhere"></p><div id="live"></div><section id="live-video-panel" aria-label="動画LIVEの映像" hidden><video id="camera-preview" autoplay muted playsinline aria-label="自分のカメラのプレビュー" hidden></video><img id="live-video-frame" alt="配信中のカメラ映像" hidden><p id="live-video-status" role="status"></p></section><div id="live-notice" class="m" role="status" style="max-width:640px;margin:auto;padding:0 14px"></div>
 <details style="max-width:640px;margin:8px auto;padding:0 14px;color:var(--sub);font-size:13px"><summary>ライブの接続状況</summary><div id="connection" role="status"></div><button class="del" id="reconnect">ライブ通信を再接続</button><p>全員が同じ添付メッセージから起動し、画面を開いたままお試しください。</p></details>
 <section id="live-feedback" aria-label="LIVEへの一言メッセージ" hidden><div class="card" style="display:block"><form id="feedback-form" hidden><label for="feedback-text">配信者へ一言（80文字まで）</label><textarea id="feedback-text" placeholder="聞こえています！" rows="2"></textarea><button id="feedback-send" type="submit">一言を送る</button><p id="feedback-status" class="m" role="status"></p><p class="m">LIVE中だけ届きます。履歴には保存しません。同じアプリのLIVE通信で送ります。個別チャットではありません。</p></form><div id="feedback-inbox" hidden><strong>視聴者からの一言</strong><p class="m">このLIVEの最新30件。表示名は送信端末の申告です。</p><div id="feedback-messages" role="log" aria-live="polite"></div></div></div></section>
 <main id="list"></main>
-<div id="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="panel"><h2 id="settings-title">設定</h2><h3>履歴の引き継ぎ</h3>
+<div id="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="panel"><h2 id="settings-title">設定</h2><h3>放送局名</h3>
+<label for="station-name">この添付の放送局名（40文字まで）</label><input id="station-name" type="text" maxlength="80" placeholder="例：中央避難所・公式">
+<p id="station-name-hint" class="m"></p><div class="row"><button id="station-save" class="go">放送局名を保存</button></div><p id="station-status" class="m" role="status"></p>
+<h3>履歴の引き継ぎ</h3>
 <p class="m">新版へ移る前に放送一覧を書き出し、新版でオーナーが取り込んでください。LIVEは全員が移行先の同じ添付から起動すると聴けます。</p>
 <div class="row"><button id="archive-export">放送一覧を書き出す</button><button id="archive-import">放送一覧を取り込む</button></div>
 <input id="archive-file" type="file" accept=".json,application/json" hidden>
-<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.4</p></div></div>
+<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.5</p></div></div>
 
+<div id="found-sheet" role="dialog" aria-modal="true" aria-labelledby="found-title"><form id="found-form" class="panel">
+<h2 id="found-title">放送局を開設する</h2><label for="found-name">放送局名（40文字まで）</label><input id="found-name" type="text" maxlength="80" placeholder="例：中央避難所・公式" required>
+<p class="m">この添付を開く全員に共有されます。名前は開設後に設定から変更できます。名称は公式性や本人確認を保証するものではありません。</p>
+<p id="found-error" class="m" role="status"></p><div class="row"><button id="found-cancel" type="button">閉じる</button><button id="found-submit" type="submit">開設する</button></div>
+</form></div>
 <div id="player"><div class="pr">
  <button id="pp" aria-label="再生/一時停止">▶</button>
  <div class="pm"><div id="pt"></div><input type="range" id="seek" min="0" max="1000" value="0" aria-label="再生位置"><div class="m" id="tm">0:00</div><label class="m" style="display:inline-flex;align-items:center;gap:6px"><input id="audio-repeat" type="checkbox" style="width:auto;margin:0">この放送をリピート</label></div>
@@ -211,6 +224,7 @@ function sendUpdate(update,info="",guard=null){
     const wait=lastSend+interval-Date.now();
     if(wait>0){$("#update-status").textContent="通信間隔の調整中（約"+Math.ceil(wait/1000)+"秒）。操作を受け付けました。";await new Promise(r=>setTimeout(r,wait))}
     if(guard&&!guard())throw Error("配信権限が解除されたため送信を停止しました");
+    const name=stationName();if(name&&!Object.hasOwn(update,"summary"))update={...update,summary:stationSummary(name)};
     if(new TextEncoder().encode(JSON.stringify(update)).length>(webxdc.sendUpdateMaxSize||128000))throw Error("送信データが上限を超えています");
     lastSend=Date.now();try{await webxdc.sendUpdate(update,"")}finally{$("#update-status").textContent=""}
   });sendQueue=task.catch(()=>{});return task;
@@ -227,6 +241,39 @@ const when=ts=>{const d=new Date(ts);return (d.getMonth()+1)+"/"+d.getDate()+" "
 const liveNotices=new Map(),endedLives=new Set();
 const opens=[], roles=[], members=new Map(), dels=new Map(); let seq=0;
 const me=()=>webxdc.selfAddr;
+const stationChanges=[];let stationBusy=false,foundBusy=false;
+const cleanStationName=value=>typeof value==="string"?value.replace(/[\u0000-\u001f\u007f]/g," ").replace(/\s+/g," ").trim():"";
+const validStationName=value=>typeof value==="string"&&value===cleanStationName(value)&&[...value].length>0&&[...value].length<=40;
+const stationSummary=name=>[...name].slice(0,20).join("");
+function stationName(){
+ const o=owner();if(!o)return "";
+ let chosen=null;for(const e of stationChanges)if(e.by===o.addr&&e.seq>o.seq&&(!chosen||e.seq>chosen.seq))chosen=e;
+ return chosen?chosen.stationName:validStationName(o.stationName)?o.stationName:(o.name||"オーナー")+"の放送局";
+}
+function refreshStationSettings(){
+ const allowed=isOwner();$("#station-name").value=stationName();$("#station-name").disabled=!allowed||stationBusy;
+ $("#station-save").disabled=!allowed||stationBusy;
+ $("#station-name-hint").textContent=allowed?"同じ添付を開く全員に共有されます。チャットの添付では短く表示される場合があります。":"放送局名を変更できるのはオーナーだけです。";
+}
+$("#station-save").onclick=async()=>{
+ if(!isOwner()||stationBusy)return;
+ const name=cleanStationName($("#station-name").value),addr=owner().addr;
+ if(!validStationName(name)){$("#station-status").textContent="放送局名を1〜40文字で入力してください。";return}
+ stationBusy=true;$("#station-status").textContent="放送局名を送信中…";$("#station-save").disabled=true;$("#station-name").disabled=true;
+ try{await sendUpdate({payload:{k:"station-name",by:me(),stationName:name},summary:stationSummary(name)},"放送局名を変更しました",()=>isOwner()&&owner().addr===addr);$("#station-status").textContent="放送局名を送信しました。ほかの端末では同期後に反映されます。"}
+ catch(e){$("#station-status").textContent="保存できませんでした："+(e.message||e)}
+ finally{stationBusy=false;refreshStationSettings()}
+};
+$("#found-cancel").onclick=()=>{if(!foundBusy)$("#found-sheet").classList.remove("show")};
+$("#found-form").onsubmit=async e=>{
+ e.preventDefault();if(owner()||foundBusy)return;
+ const name=cleanStationName($("#found-name").value);
+ if(!validStationName(name)){$("#found-error").textContent="放送局名を1〜40文字で入力してください。";return}
+ foundBusy=true;$("#found-submit").disabled=true;$("#found-error").textContent="放送局を開設中…";
+ try{await sendUpdate({payload:{k:"open",addr:me(),name:webxdc.selfName||"だれか",stationName:name,ts:Date.now()},summary:stationSummary(name)},"📻 "+name+"を開設しました",()=>!owner());$("#found-sheet").classList.remove("show")}
+ catch(e){$("#found-error").textContent="開設できませんでした："+(e.message||e)}
+ finally{foundBusy=false;$("#found-submit").disabled=false}
+};
 function owner(){let o=null;for(const x of opens)if(!o||x.ts<o.ts||(x.ts===o.ts&&x.addr<o.addr))o=x;return o}
 function can(addr,lim){const o=owner();if(!o)return false;if(addr===o.addr)return true;let r=null;
   for(const e of roles)if(e.by===o.addr&&e.target===addr&&(e.ts||0)<=lim&&(!r||roleKey(e)>roleKey(r)))r=e;return !!(r&&r.on)}
@@ -296,7 +343,8 @@ const historyReady=webxdc.setUpdateListener(u=>{
   const p=u.payload; if(!p||typeof p!=="object") return; seq=Math.max(seq+1,Number.isSafeInteger(u.serial)?u.serial:0);
   const updateSeq=Number.isSafeInteger(u.serial)?u.serial:seq;
   if(p.k==="hello"){members.set(p.addr,p.name)}
-  else if(p.k==="open"){opens.push(p);members.set(p.addr,p.name)}
+  else if(p.k==="open"){opens.push({...p,seq:updateSeq});members.set(p.addr,p.name)}
+  else if(p.k==="station-name"){if(typeof p.by==="string"&&validStationName(p.stationName))stationChanges.push({...p,seq:updateSeq});else return}
   else if(p.k==="role"){roles.push({...p,seq:updateSeq})}
   else if(p.k==="live"&&Number.isFinite(p.ts)&&typeof p.addr==="string"){
     liveNotices.set(p.addr+":"+p.sid,p);
@@ -328,6 +376,9 @@ Promise.resolve(historyReady).then(()=>{ /* 未開設なら開設操作自身で
 
 function render(){
   const o=owner(),mine=isOwner(),canPost=can(me(),Infinity);
+  const label=stationName();$("#station-identity").hidden=!o;$("#station-label").textContent=label;$("#station-owner").textContent=o?"オーナー："+(o.name||"名前なし"):"";
+  document.title=label?label+"｜ちゃっと放送局":"ちゃっと放送局";
+  if($("#settings-sheet").classList.contains("show")){const disabled=!mine||stationBusy;$("#station-name").disabled=disabled;$("#station-save").disabled=disabled;if(!stationBusy&&document.activeElement!==$("#station-name"))$("#station-name").value=label}
   if(myLive&&!canPost)endLive();
   if(live&&!can(live.addr,Infinity)){stopListen();live=null;renderLive()}
   $("#archive-import").disabled=!mine||archiveBusy;$("#archive-owner-hint").textContent=mine?"":"取り込めるのは放送局のオーナーだけです。書き出しはメンバーも利用できます。";
@@ -362,8 +413,7 @@ $("#mlist").onclick=e=>{const b=e.target.closest("[data-a]");if(!b||!isOwner())r
 $("#list").onclick=e=>{
   const request=e.target.closest("[data-request]");if(request){requestRepair(request.dataset.request);return}
   const resend=e.target.closest("[data-resend]");if(resend){resendTrack(resend.dataset.resend);return}
-  if(e.target.closest("#found")){const button=e.target.closest("#found");if(button.disabled)return;button.disabled=true;button.textContent="放送局を開設中…";const n=webxdc.selfName||"だれか";
-    Promise.resolve(sendUpdate({payload:{k:"open",addr:me(),name:n,ts:Date.now()}},`📻 ${n}さんが放送局を開設しました`)).catch(()=>{button.disabled=false;button.textContent="放送局を開設する";alert("開設に失敗しました")});return}
+  if(e.target.closest("#found")){if(owner())return;$("#found-name").value=(webxdc.selfName||"私")+"の放送局";$("#found-error").textContent="";$("#found-sheet").classList.add("show");$("#found-name").focus();return}
   const d=e.target.closest(".del");
   if(d){const id=d.dataset.del;clearTimeout(armT);
     if(armed===id){armed=null;Promise.resolve(sendUpdate({payload:{id,del:1,addr:me()}},"")).catch(()=>{alert("削除に失敗しました");render()})}
@@ -811,7 +861,7 @@ const ARCHIVE_MAX=64*1024*1024;let archiveBusy=false;
 function closeSettings(){
   $("#settings-sheet").classList.remove("show");$("#settings").focus?.();
 }
-$("#settings").onclick=()=>{$("#settings-sheet").classList.add("show");$("#settings-close").focus?.()};
+$("#settings").onclick=()=>{refreshStationSettings();$("#station-status").textContent="";$("#settings-sheet").classList.add("show");$("#settings-close").focus?.()};
 $("#settings-close").onclick=closeSettings;
 $("#settings-sheet").onclick=e=>{if(e.target===$("#settings-sheet"))closeSettings()};
 addEventListener("keydown",e=>{
