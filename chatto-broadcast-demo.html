@@ -169,7 +169,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 <p class="m">新版へ移る前に放送一覧を書き出し、新版でオーナーが取り込んでください。LIVEは全員が移行先の同じ添付から起動すると聴けます。</p>
 <div class="row"><button id="archive-export">放送一覧を書き出す</button><button id="archive-import">放送一覧を取り込む</button></div>
 <input id="archive-file" type="file" accept=".json,application/json" hidden>
-<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.8</p></div></div>
+<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.9</p></div></div>
 
 <div id="found-sheet" role="dialog" aria-modal="true" aria-labelledby="found-title"><form id="found-form" class="panel">
 <h2 id="found-title">放送局を開設する</h2><label for="found-name">放送局名（40文字まで）</label><input id="found-name" type="text" maxlength="80" placeholder="例：中央避難所・公式" required>
@@ -340,11 +340,18 @@ async function resendTrack(id){
  }catch(e){repairStatus("再送が止まりました："+(e.message||e)+"。復旧後に再送できます。")}finally{repairBusy=false;later()}
 }
 let liveBooted=false;function deliverLiveUpdate(fn){if(liveBooted)fn();else Promise.resolve().then(fn)}
+// Wait for history replay, and announce once an owner becomes known.
+let memberHistoryReady=false,memberHelloTask=null,memberHelloSentName=null,memberHelloRetryAt=0;
+function ensureMemberHello(){
+ const addr=me(),name=webxdc.selfName||"だれか";
+ if(!memberHistoryReady||!owner()||memberHelloTask||members.get(addr)===name||memberHelloSentName===name||Date.now()<memberHelloRetryAt)return;
+ memberHelloTask=sendUpdate({payload:{k:"hello",addr,name}},"",()=>!!owner()).then(()=>{memberHelloSentName=name;memberHelloRetryAt=0}).catch(()=>{memberHelloRetryAt=Date.now()+5000}).finally(()=>{memberHelloTask=null});
+}
 const historyReady=webxdc.setUpdateListener(u=>{
   const p=u.payload; if(!p||typeof p!=="object") return; seq=Math.max(seq+1,Number.isSafeInteger(u.serial)?u.serial:0);
   const updateSeq=Number.isSafeInteger(u.serial)?u.serial:seq;
   if(p.k==="hello"){members.set(p.addr,p.name)}
-  else if(p.k==="open"){opens.push({...p,seq:updateSeq});members.set(p.addr,p.name)}
+  else if(p.k==="open"){opens.push({...p,seq:updateSeq});members.set(p.addr,p.name);ensureMemberHello()}
   else if(p.k==="station-name"){if(typeof p.by==="string"&&validStationName(p.stationName))stationChanges.push({...p,seq:updateSeq});else return}
   else if(p.k==="role"){roles.push({...p,seq:updateSeq})}
   else if(p.k==="live"&&Number.isFinite(p.ts)&&typeof p.addr==="string"){
@@ -371,12 +378,7 @@ const historyReady=webxdc.setUpdateListener(u=>{
   } else return;
   later();
 },0);
-Promise.resolve(historyReady).then(()=>{ /* 未開設なら開設操作自身で登録し、初回の送信枠を空ける。 */
-  if(!owner())return;
-  const k="hi:"+me()+":"+webxdc.selfName;let done=false;
-  try{done=!!localStorage.getItem(k)}catch(e){}
-  if(!done){Promise.resolve(sendUpdate({payload:{k:"hello",addr:me(),name:webxdc.selfName}},"")).then(()=>{try{localStorage.setItem(k,"1")}catch(e){}}).catch(()=>{})}
-});
+Promise.resolve(historyReady).then(()=>{memberHistoryReady=true;ensureMemberHello()});
 
 function render(){
   const o=owner(),mine=isOwner(),canPost=can(me(),Infinity);
@@ -445,7 +447,7 @@ const PL_FRAME_BYTES=2004,PL_JPEG_MAX=9000,PL_MAX_MS=600000;
 const liveReceipts=new Map();let pseudoPresenceAt=0,pseudoPresenceKey="";
 function liveInterval(){return Number.isFinite(webxdc.sendUpdateInterval)?Math.max(0,webxdc.sendUpdateInterval):10000}
 function pseudoAge(){return Math.max(120000,liveInterval()*5)}
-function liveTTL(){return live?.protocol===1?Math.max(30000,(live.batchMs||liveInterval()||2000)*4+15000):TTL}
+function liveTTL(){return live?.protocol===1&&live.transport==="chat"?Math.max(30000,(live.batchMs||liveInterval()||2000)*4+15000):TTL}
 function validLiveMeta(p){return p&&p.protocol===1&&Number.isInteger(p.sid)&&p.sid>=0&&p.sid<=4294967295&&typeof p.addr==="string"&&p.addr.length>0&&p.addr.length<=512&&typeof p.title==="string"&&[...p.title].length<=60&&typeof p.name==="string"&&[...p.name].length<=100&&Number.isFinite(p.ts)&&Math.abs(Date.now()-p.ts)<=pseudoAge()&&Number.isInteger(p.epoch)&&p.epoch>=0&&p.epoch<10000&&["chat","rt"].includes(p.mode)}
 function routeLabel(mode){return mode==="chat"?"チャット経由の疑似LIVE":"リアルタイムLIVE"}
 function pseudoCapacity(camera){const size=webxdc.sendUpdateMaxSize||128000;return Math.max(0,Math.min(120,Math.floor((size-4096-(camera?PL_JPEG_MAX*1.34:0))*.74/PL_FRAME_BYTES)))}
@@ -827,19 +829,21 @@ function endLive(){const L=myLive;if(!L)return;myLive=null;const tail=L.protocol
   [0,300,700].forEach(ms=>setTimeout(()=>rsend(ctl({t:"e",sid:L.sid})),ms)); /* 取りこぼし対策で3回送る */
   const notify=()=>sendUpdate({payload:{k:"liveend",sid:L.sid,addr:me(),name:L.name,title:L.title,ts:Date.now()}},`⚫ ${L.name||webxdc.selfName||"だれか"}さんのライブ配信が終了しました：${L.title}`);Promise.resolve(L.protocol===1?tail.then(notify):notify()).catch(()=>{rtError="ライブは終了しましたが、チャットへの終了通知を送信できませんでした。必要に応じてチャットで終了を伝えてください";renderConnection()});renderLive()}
 addEventListener("pagehide",endLive);
-setInterval(()=>{autoLiveTransport();sendPseudoPresence();if(live&&!live.ending&&Date.now()-live.last>liveTTL()){stopListen();live=null}
+setInterval(()=>{ensureMemberHello();autoLiveTransport();sendPseudoPresence();if(live&&!live.ending&&Date.now()-live.last>liveTTL()){stopListen();live=null}
   if(myLive)liveHeartbeat();
   if(tickN++%3===0)sendPresence();renderLive()},1000);
 
 function mediaFailure(e){
- const name=e?.name||"Error",message=e?.message||String(e);
+ const name=e?.name||"Error",message=e?.message||String(e),preview=webxdc.isBrowserPreview===true;
  let help="";
- if(window.isSecureContext===false)help="HTTPSまたはlocalhostで開いてください。";
- else if(name==="NotAllowedError"||name==="SecurityError")help="ブラウザのサイト設定とWindowsのカメラ・マイク利用許可を確認してください。";
- else if(name==="NotFoundError")help="カメラ・マイクが接続されているか確認してください。";
- else if(name==="NotReadableError")help="他のアプリが機器を使用していないか確認してください。";
+ if(preview&&window.isSecureContext===false)help="HTTPSまたはlocalhostで開いてください。";
+ else if(name==="NotAllowedError"||name==="SecurityError")help=preview?"ブラウザのサイト設定と、端末のカメラ・マイク利用許可を確認してください。":"端末の設定でDelta Chatのカメラ・マイク利用を許可してください。";
+ else if(name==="NotFoundError")help="この端末でカメラ・マイクが利用できるか確認してください。";
+ else if(name==="NotReadableError")help="他のアプリがカメラ・マイクを使用していないか確認してください。";
+ if(!preview)help+=(help?" ":"")+"Delta Chatの設定とバージョンを確認し、必要に応じて最新版へ更新してください。";
  return name+"："+message+(help?" ／ "+help:"");
 }
+
 /* ---- 再生 ---- */
 // この端末の収録再生だけに適用。LIVE・録音プレビューには適用しない。
 let repeatEnabled=false;
