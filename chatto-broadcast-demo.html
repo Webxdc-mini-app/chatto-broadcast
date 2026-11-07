@@ -169,7 +169,7 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 <p class="m">新版へ移る前に放送一覧を書き出し、新版でオーナーが取り込んでください。LIVEは全員が移行先の同じ添付から起動すると聴けます。</p>
 <div class="row"><button id="archive-export">放送一覧を書き出す</button><button id="archive-import">放送一覧を取り込む</button></div>
 <input id="archive-file" type="file" accept=".json,application/json" hidden>
-<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.7</p></div></div>
+<p id="archive-owner-hint" class="m"></p><p id="archive-status" class="m" role="status"></p><div class="row"><button id="settings-close">閉じる</button></div><p class="settings-version">ちゃっと放送局 1.6.8</p></div></div>
 
 <div id="found-sheet" role="dialog" aria-modal="true" aria-labelledby="found-title"><form id="found-form" class="panel">
 <h2 id="found-title">放送局を開設する</h2><label for="found-name">放送局名（40文字まで）</label><input id="found-name" type="text" maxlength="80" placeholder="例：中央避難所・公式" required>
@@ -200,9 +200,9 @@ header h1{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
 <div id="sheet3"><div class="panel">
  <h2>ライブ配信を始める</h2>
  <input type="text" id="ltitle" placeholder="タイトル（例：夜のおしゃべり）" maxlength="60">
- <div class="live-options"><label for="live-mode">配信の種類</label><select id="live-mode"><option value="audio">音声LIVE</option><option value="video">動画LIVE（実験）</option></select><label for="camera-facing">動画LIVEで使うカメラ</label><select id="camera-facing"><option value="user">前面カメラ</option><option value="environment">背面カメラ</option></select></div>
- <p class="hint left">動画LIVEは小さな映像（最大320×240・約2コマ／秒）と音声を送る実験機能です。映像と音声のずれ・コマ落ちがあります。保存・録画はしません。</p>
- <div class="hint" style="text-align:left;margin-top:12px">今アプリを開いている人にだけ届きます（録音は残りません）。聴く人は、画面の「▶」を押すと聴けます。</div>
+ <div class="live-options"><label for="live-mode">配信の種類</label><select id="live-mode"><option value="audio">音声LIVE</option><option value="video">動画LIVE（実験）</option></select><label for="live-transport">接続方式</label><select id="live-transport"><option value="auto">自動（通信応答で切替）</option><option value="chat">チャット経由の疑似LIVE</option><option value="rt">リアルタイム固定</option></select><label for="camera-facing">動画LIVEで使うカメラ</label><select id="camera-facing"><option value="user">前面カメラ</option><option value="environment">背面カメラ</option></select></div>
+ <p class="hint left">自動では視聴端末との応答を確認してリアルタイムLIVEへ切り替え、応答が途切れるとチャット経由の疑似LIVEへ戻ります。疑似LIVEの映像は最大160×120のコマ撮りで、通常は2〜10秒以上ごとの更新です。音声と映像はずれる場合があります。</p>
+ <div class="hint" style="text-align:left;margin-top:12px">聴く人は同じ添付を開き「▶」を押してください。疑似LIVEの音声・画像はチャットの通信履歴に残ります。再生一覧には追加しません。最長10分で自動終了します。外部回線がなくてもチャットが配送できる環境が必要です。遅延・通信量は配送状況によります。</div>
  <div id="lerr" style="color:var(--rec);text-align:center;font-size:14px;min-height:20px"></div>
  <div class="row"><button id="lclose">閉じる</button><button class="go" id="lstart">ライブ開始</button></div>
 </div></div>
@@ -339,6 +339,7 @@ async function resendTrack(id){
   repairStatus(packets.length+"件を再送しました。これは視聴端末の受信完了を示すものではありません。視聴側で▶が表示され、再生できるか確認してください。");
  }catch(e){repairStatus("再送が止まりました："+(e.message||e)+"。復旧後に再送できます。")}finally{repairBusy=false;later()}
 }
+let liveBooted=false;function deliverLiveUpdate(fn){if(liveBooted)fn();else Promise.resolve().then(fn)}
 const historyReady=webxdc.setUpdateListener(u=>{
   const p=u.payload; if(!p||typeof p!=="object") return; seq=Math.max(seq+1,Number.isSafeInteger(u.serial)?u.serial:0);
   const updateSeq=Number.isSafeInteger(u.serial)?u.serial:seq;
@@ -347,9 +348,12 @@ const historyReady=webxdc.setUpdateListener(u=>{
   else if(p.k==="station-name"){if(typeof p.by==="string"&&validStationName(p.stationName))stationChanges.push({...p,seq:updateSeq});else return}
   else if(p.k==="role"){roles.push({...p,seq:updateSeq})}
   else if(p.k==="live"&&Number.isFinite(p.ts)&&typeof p.addr==="string"){
-    liveNotices.set(p.addr+":"+p.sid,p);
+    liveNotices.set(p.addr+":"+p.sid,p);if(p.protocol===1)deliverLiveUpdate(()=>receivePseudoNotice(p,updateSeq));
   }
-  else if(p.k==="liveend"&&typeof p.addr==="string"){endedLives.add(p.addr+":"+p.sid)}
+  else if(p.k==="liveend"&&typeof p.addr==="string"){endedLives.add(p.addr+":"+p.sid);deliverLiveUpdate(()=>receiveLiveEnd(p))}
+  else if(p.k==="pl-state"){deliverLiveUpdate(()=>receivePseudoNotice(p,updateSeq))}
+  else if(p.k==="pl-data"){deliverLiveUpdate(()=>receivePseudoBatch(p,updateSeq))}
+  else if(p.k==="pl-presence"){deliverLiveUpdate(()=>receivePseudoPresence(p))}
   else if(p.k==="repair-request"){receiveRepairRequest(p,updateSeq)}
   else if(p.k==="repair-done"){
     const t=tracks.get(p.track);if(t&&p.addr===t.addr&&can(p.addr,Infinity)&&Array.isArray(p.rids)&&p.rids.length<=100){const requests=repairRequests.get(t.id);if(requests)for(const [addr,r] of requests)if(p.rids.includes(r.rid)&&r.serial<updateSeq)requests.delete(addr)}
@@ -436,6 +440,122 @@ let feedbackKey="",feedbackPending=null,feedbackStatus="",feedbackLastSent=0,fee
 const feedbackMessages=[],feedbackSeen=new Set(),feedbackRates=new Map();
 let rt=null, live=null, myLive=null, lst=null, liveHtml="", tickN=0, rtError="", lastRT=0, rtCount=0, liveStarting=false; const peers=new Map();
 const LIVE_JPEG_MAX=32000,LIVE_VIDEO_WIDTH=320,LIVE_VIDEO_HEIGHT=240,LIVE_VIDEO_INTERVAL=500;
+/* 1.6.8: bounded chat transport; network flags are not proof of peer connectivity. */
+const PL_FRAME_BYTES=2004,PL_JPEG_MAX=9000,PL_MAX_MS=600000;
+const liveReceipts=new Map();let pseudoPresenceAt=0,pseudoPresenceKey="";
+function liveInterval(){return Number.isFinite(webxdc.sendUpdateInterval)?Math.max(0,webxdc.sendUpdateInterval):10000}
+function pseudoAge(){return Math.max(120000,liveInterval()*5)}
+function liveTTL(){return live?.protocol===1?Math.max(30000,(live.batchMs||liveInterval()||2000)*4+15000):TTL}
+function validLiveMeta(p){return p&&p.protocol===1&&Number.isInteger(p.sid)&&p.sid>=0&&p.sid<=4294967295&&typeof p.addr==="string"&&p.addr.length>0&&p.addr.length<=512&&typeof p.title==="string"&&[...p.title].length<=60&&typeof p.name==="string"&&[...p.name].length<=100&&Number.isFinite(p.ts)&&Math.abs(Date.now()-p.ts)<=pseudoAge()&&Number.isInteger(p.epoch)&&p.epoch>=0&&p.epoch<10000&&["chat","rt"].includes(p.mode)}
+function routeLabel(mode){return mode==="chat"?"チャット経由の疑似LIVE":"リアルタイムLIVE"}
+function pseudoCapacity(camera){const size=webxdc.sendUpdateMaxSize||128000;return Math.max(0,Math.min(120,Math.floor((size-4096-(camera?PL_JPEG_MAX*1.34:0))*.74/PL_FRAME_BYTES)))}
+function liveEnvelope(L){return {sid:L.sid,addr:me(),name:L.name,title:L.title,camera:L.camera,protocol:1,mode:L.transport,epoch:L.epoch,batchMs:L.batchMs,ts:Date.now()}}
+function resetLivePlayback(){
+ if(!lst)return;for(const node of lst.sources||[])try{node.stop()}catch(e){}lst.sources=new Set();lst.nextT=0;lst.lastSeq=null;lst.pseudoNext=null;lst.lastVideoSeq=null;clearLivePicture(lst);
+}
+function acceptLiveRoute(p){
+ if(endedLives.has(p.addr+":"+p.sid)||!validLiveMeta(p)||!can(p.addr,Infinity)||p.addr===me())return false;
+ if(live&&(live.sid!==p.sid||live.addr!==p.addr)&&Date.now()-live.last<=liveTTL())return false;
+ const same=live&&live.sid===p.sid&&live.addr===p.addr;
+ if(same&&live.ending)return false;
+ if(same&&live.protocol===1&&(p.epoch<live.epoch||(p.epoch===live.epoch&&p.mode!==live.transport)))return false;
+ if(!same){stopListen();live={sid:p.sid,addr:p.addr,protocol:1,epoch:-1}}
+ if(live.epoch!==p.epoch||live.transport!==p.mode)resetLivePlayback();
+ Object.assign(live,{name:p.name,title:p.title,camera:p.camera===true,protocol:1,transport:p.mode,epoch:p.epoch,batchMs:Math.max(2000,Math.min(30000,Number(p.batchMs)||10000)),last:Date.now(),n:p.n||0});return true;
+}
+function receivePseudoNotice(p,serial){
+ if(p.protocol!==1||!canAtSequence(p.addr,serial))return;
+ if(acceptLiveRoute(p))renderLive();
+}
+function receivePseudoBatch(p,serial){
+ if(p.mode!=="chat"||!validLiveMeta(p)||!canAtSequence(p.addr,serial)||typeof p.d!=="string"||!Number.isInteger(p.q)||p.q<0||p.q>100000||p.d.length>180000||!(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).test(p.d))return;
+ let bytes;try{bytes=b2u(p.d)}catch(e){return}
+ const count=bytes.length/PL_FRAME_BYTES;if(!Number.isInteger(count)||count>120||count<1)return;
+ for(let i=0;i<count;i++)if(bytes[i*PL_FRAME_BYTES+2]>88)return;
+ let picture=null;if(p.jpg!==undefined){if(typeof p.jpg!=="string"||p.jpg.length>12000||!(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).test(p.jpg))return;try{picture=b2u(p.jpg)}catch(e){return}if(picture.length>PL_JPEG_MAX||!jpegSize(picture)||!Number.isInteger(p.vq)||p.vq<0||p.vq>100000)return}
+ if(!acceptLiveRoute(p)||!lst)return;
+ const L=lst,c=L.ctx;if(c.state&&c.state!=="running")return;
+ for(let i=0;i<count;i++){
+  const q=p.q+i;if(L.pseudoNext!=null&&q<L.pseudoNext)continue;
+  if(L.pseudoNext!=null&&q>L.pseudoNext){L.gaps=(L.gaps||0)+q-L.pseudoNext;L.nextT+=Math.min(2,(q-L.pseudoNext)*FR/SR)}L.pseudoNext=q+1;
+  if(L.nextT<c.currentTime+.05)L.nextT=c.currentTime+1.5;
+  if(L.nextT>c.currentTime+Math.min(35,count*FR/SR+5))continue;
+  const b=c.createBuffer(1,FR,SR);b.copyToChannel(adDec(bytes.subarray(i*PL_FRAME_BYTES,(i+1)*PL_FRAME_BYTES)),0);
+  const node=c.createBufferSource();node.buffer=b;node.connect(L.gain);if(!L.sources)L.sources=new Set();L.sources.add(node);node.onended=()=>L.sources.delete(node);node.start(L.nextT);L.nextT+=b.duration;L.frames++;L.lastAudio=Date.now();
+ }
+ if(picture&&live.camera){const packet=new Uint8Array(9+picture.length),v=new DataView(packet.buffer);packet[0]=3;v.setUint32(1,p.sid);v.setUint32(5,p.vq>>>0);packet.set(picture,9);receiveCameraFrame(packet)}renderLive();
+}
+function receiveLiveEnd(p){
+ if(live&&live.addr===p.addr&&live.sid===p.sid){
+  if(live.ending)return;
+  const remaining=lst?Math.max(0,lst.nextT-lst.ctx.currentTime):0;
+  if(live.protocol===1&&live.transport==="chat"&&remaining>0){live.ending=true;const ending=live;ending.endTimer=setTimeout(()=>{if(live===ending){stopListen();live=null;renderLive()}},Math.min(35000,remaining*1000+150));renderLive()}
+  else{stopListen();live=null;renderLive()}
+ }
+}
+function sendPseudoPresence(force=false){
+ const key=live&&lst&&!live.ending?live.addr+":"+live.sid:"";
+ if(!key){pseudoPresenceKey="";return}
+ if(live.protocol!==1||(!force&&pseudoPresenceKey===key&&Date.now()-pseudoPresenceAt<30000))return;
+ pseudoPresenceAt=Date.now();pseudoPresenceKey=key;
+ sendUpdate({payload:{k:"pl-presence",sid:live.sid,to:live.addr,addr:me(),ts:Date.now()}},"",()=>!!live&&!!lst&&key===live.addr+":"+live.sid).catch(()=>{});
+}
+function receivePseudoPresence(p){
+ if(!myLive||p.to!==me()||p.sid!==myLive.sid||typeof p.addr!=="string"||p.addr.length>512||!Number.isFinite(p.ts)||Math.abs(Date.now()-p.ts)>pseudoAge())return;
+ if(liveReceipts.size>=100&&!liveReceipts.has(p.addr))return;
+ const old=liveReceipts.get(p.addr)||{};liveReceipts.set(p.addr,{...old,seen:Date.now()});
+}
+function receiveRouteAck(m){
+ const L=myLive;if(!L||m.to!==me()||m.sid!==L.sid||typeof m.addr!=="string"||m.addr===me()||m.addr.length>512||typeof m.token!=="string"||!L.probes?.has(m.token))return;
+ const at=L.probes.get(m.token);if(Date.now()-at>5000)return;
+ if(liveReceipts.size>=100&&!liveReceipts.has(m.addr))return;
+ if(!m.on){liveReceipts.delete(m.addr);return}
+ const old=liveReceipts.get(m.addr)||{};liveReceipts.set(m.addr,{seen:Date.now(),rt:Date.now(),since:old.since&&Date.now()-(old.rt||0)<6500?old.since:Date.now()});
+}
+function liveHeartbeat(){
+ const L=myLive;if(!L)return;
+ if(!L.probes)L.probes=new Map();const token=Math.random().toString(36).slice(2)+Date.now().toString(36);L.probes.set(token,Date.now());for(const [key,at]of L.probes)if(Date.now()-at>6000)L.probes.delete(key);
+ rsend(ctl({t:"b",...liveEnvelope(L),n:cnt(),probe:token}));
+}
+function changeLiveTransport(L,mode){
+ if(myLive!==L||L.transport===mode)return;
+ L.transport=mode;L.epoch++;L.pendingAudio=[];L.pendingPicture=null;L.routeReason=mode==="chat"?"ライブ応答を確認できないため、チャット経由で送信します":"視聴端末との双方向通信を確認しました";
+ if(mode==="rt")sendUpdate({payload:{k:"pl-state",...liveEnvelope(L)}},"",()=>myLive===L&&can(me(),Infinity)).catch(()=>{});
+ liveHeartbeat();renderLive();
+}
+function autoLiveTransport(){
+ const L=myLive;if(!L)return;if(!can(me(),Infinity)){endLive();return}
+ if(Date.now()-L.t0>=PL_MAX_MS){endLive();return}
+ if(L.policy==="auto"){
+  const now=Date.now();for(const [key,r]of liveReceipts)if(now-r.seen>75000)liveReceipts.delete(key);
+  const receivers=[...liveReceipts.values()],healthy=!!rt&&receivers.length>0&&receivers.every(r=>now-(r.rt||0)<6000),stable=healthy&&receivers.every(r=>now-(r.since||now)>=3000);
+  if(L.transport==="rt"&&!healthy)changeLiveTransport(L,"chat");else if(L.transport==="chat"&&stable&&now-(L.lastRouteAt||0)>8000){L.lastRouteAt=now;changeLiveTransport(L,"rt")}
+ }
+ sendPseudoPresence();
+}
+function queuePseudoAudio(L,enc,q){
+ if(myLive!==L||L.transport!=="chat")return;
+ L.pendingAudio.push({enc,q});if(L.pendingAudio.length>L.maxFrames){L.pendingAudio.shift();L.dropped++}
+ if(L.pendingAudio.length>=L.targetFrames)flushPseudo(L);
+}
+function flushPseudo(L,final=false){
+ if(L.flushing)return final?L.flushing.then(()=>flushPseudo(L,true)):L.flushing;
+ if(!L.pendingAudio?.length)return Promise.resolve();
+ const list=L.pendingAudio.splice(0,L.maxFrames),raw=new Uint8Array(list.length*PL_FRAME_BYTES);list.forEach((f,i)=>raw.set(f.enc,i*PL_FRAME_BYTES));
+ const packet={k:"pl-data",...liveEnvelope(L),mode:"chat",q:list[0].q,d:b64(raw)},picture=L.pendingPicture;L.pendingPicture=null;
+ if(picture&&L.camera){packet.jpg=picture.d;packet.vq=picture.q}
+ const epoch=L.epoch;
+ L.flushing=sendUpdate({payload:packet},"",()=>can(me(),Infinity)&&L.transport==="chat"&&L.epoch===epoch&&(myLive===L||L.closed)).then(()=>{L.batches++;L.sentBytes+=packet.d.length+(packet.jpg?.length||0);if(picture)L.videoFrames++}).catch(e=>{L.sendErrors++;L.lastSendError=e.message||String(e);if(!L.closed)rtError="疑似LIVEの送信が止まりました："+L.lastSendError}).finally(()=>{L.flushing=null;if(myLive===L&&L.pendingAudio.length>=L.targetFrames)flushPseudo(L);renderConnection()});return L.flushing;
+}
+function finishPseudo(L){
+ L.closed=true;clearTimeout(L.pseudoTimer);clearTimeout(L.maxTimer);
+ return Promise.resolve(L.flushing).then(()=>flushPseudo(L,true));
+}
+function startPseudoPump(L){
+ const pump=()=>{if(myLive!==L)return;if(L.transport==="chat")flushPseudo(L);L.pseudoTimer=setTimeout(pump,L.batchMs)};
+ L.pseudoTimer=setTimeout(pump,L.batchMs);L.maxTimer=setTimeout(()=>{if(myLive===L)endLive()},PL_MAX_MS);
+}
+
 function jpegSize(b){
   if(b.length<12||b[0]!==255||b[1]!==216||b[b.length-2]!==255||b[b.length-1]!==217)return null;
   let i=2;while(i+3<b.length){
@@ -459,7 +579,7 @@ function renderLiveVideo(){
   $("#live-video-panel").hidden=!own&&!watching;cameraPreview.hidden=!own;
   livePicture.hidden=!watching||!livePicture.src;
   let msg="";
-  if(own)msg="動画LIVE（実験）・最大320×240・約2コマ／秒・映像送出 "+myLive.videoFrames+"件"+(myLive.videoError?"／"+myLive.videoError:"");
+  if(own)msg=(myLive.transport==="chat"?"疑似動画LIVE・最大160×120・最新のコマをまとめて送信":"動画LIVE（実験）・最大320×240・約2コマ／秒")+"・映像送出 "+myLive.videoFrames+"件"+(myLive.videoError?"／"+myLive.videoError:"");
   else if(watching){msg="動画LIVE（実験）・映像受信 "+(lst.videoFrames||0)+"件";
     if(!lst.lastVideoAt)msg+="／映像を待っています";
     else if(Date.now()-lst.lastVideoAt>5000)msg+="／映像の更新が途切れています";
@@ -489,17 +609,17 @@ async function captureCameraFrame(L){
     const track=L.stream.getVideoTracks()[0];if(!track||track.readyState==="ended")throw Error("カメラが停止しています。配信を終了して開始し直してください");
     const w=cameraPreview.videoWidth,h=cameraPreview.videoHeight;
     if(cameraPreview.readyState<2||!w||!h){L.videoError="カメラ映像を待っています。「映像を再開」もお試しください";return}
-    const scale=Math.min(LIVE_VIDEO_WIDTH/w,LIVE_VIDEO_HEIGHT/h,1);
+    const small=L.transport==="chat",scale=Math.min((small?160:LIVE_VIDEO_WIDTH)/w,(small?120:LIVE_VIDEO_HEIGHT)/h,1);
     L.canvas.width=Math.max(1,Math.floor(w*scale));L.canvas.height=Math.max(1,Math.floor(h*scale));
     L.canvasContext.drawImage(cameraPreview,0,0,L.canvas.width,L.canvas.height);
-    let blob=await canvasJpeg(L.canvas,.35);if(blob.size>LIVE_JPEG_MAX)blob=await canvasJpeg(L.canvas,.15);
-    if(blob.size>LIVE_JPEG_MAX)throw Error("映像の容量が大きいため、このコマを省略しました");
+    const limit=small?PL_JPEG_MAX:LIVE_JPEG_MAX;let blob=await canvasJpeg(L.canvas,small?.25:.35);if(blob.size>limit)blob=await canvasJpeg(L.canvas,small?.12:.15);
+    if(blob.size>limit)throw Error("映像の容量が大きいため、このコマを省略しました");
     const bytes=new Uint8Array(await blob.arrayBuffer());if(myLive!==L)return;
     if(!jpegSize(bytes))throw Error("この端末では小さなJPEG映像を生成できません");
     const packet=new Uint8Array(9+bytes.length),view=new DataView(packet.buffer);packet[0]=3;view.setUint32(1,L.sid);view.setUint32(5,L.videoSequence++>>>0);packet.set(bytes,9);
-    if(rsend(packet)){L.videoFrames++;L.videoError=""}
+    if(L.transport==="chat"){L.pendingPicture={d:b64(bytes),q:new DataView(packet.buffer).getUint32(5)};L.videoError=""}else if(rsend(packet)){L.videoFrames++;L.videoError=""}
   }catch(e){L.videoError=e.message||String(e)}finally{
-    L.frameBusy=false;if(myLive===L)L.videoTimer=setTimeout(()=>captureCameraFrame(L),LIVE_VIDEO_INTERVAL);renderLiveVideo();
+    L.frameBusy=false;if(myLive===L)L.videoTimer=setTimeout(()=>captureCameraFrame(L),L.transport==="chat"?Math.max(2000,L.batchMs):LIVE_VIDEO_INTERVAL);renderLiveVideo();
   }
 }
 function resumeCamera(){
@@ -521,6 +641,8 @@ function renderConnection(){
   if(lst){status+="／音声再生："+lst.ctx.state+"／音声受信："+lst.frames+"件";if(live?.camera)status+="／映像受信："+(lst.videoFrames||0)+"件";
     if(Date.now()-lst.started>5000&&!lst.frames)status+="／音声が届いていません";
   }
+  if(myLive?.protocol===1){status+="／方式："+routeLabel(myLive.transport)+"／疑似LIVE送信 "+myLive.batches+"通・約"+Math.round(myLive.sentBytes/1024)+"KB／送信間隔 約"+Math.round(myLive.batchMs/1000)+"秒／省略音声 "+myLive.dropped+"コマ／送信エラー "+myLive.sendErrors+"件";if(myLive.routeReason)status+="／"+myLive.routeReason}
+  if(live?.protocol===1)status+="／受信方式："+routeLabel(live.transport)+(live.ending?"（終了・残りの音声を再生中）":"")+(lst?.gaps?"／不足音声 "+lst.gaps+"コマ":"");
   if(rtError)status+="／"+rtError;
   $("#connection").textContent=status;
   const recent=[...liveNotices.values()].filter(p=>can(p.addr,Infinity)&&Date.now()-p.ts<120000&&!endedLives.has(p.addr+":"+p.sid)).sort((a,b)=>b.ts-a.ts)[0];
@@ -540,7 +662,7 @@ function joinRT(reconnect=false){
 }
 function reconnectLive(){
   joinRT(true);sendPresence();
-  if(myLive)rsend(ctl({t:"b",sid:myLive.sid,addr:me(),name:webxdc.selfName||"だれか",title:myLive.title,n:cnt(),camera:myLive.camera}));
+  if(myLive)liveHeartbeat();
   renderConnection();
 }
 $("#reconnect").onclick=reconnectLive;
@@ -549,7 +671,7 @@ function recoverLive(){
   rtRecoveryAt=Date.now();reconnectLive();
 }
 addEventListener("online",recoverLive);
-addEventListener("offline",()=>{rtError="回線の切断を検知しました。復旧後、配信者・視聴者の両方で再接続してください";renderConnection()});
+addEventListener("offline",()=>{autoLiveTransport();renderConnection()});
 document.addEventListener?.("visibilitychange",()=>{if(document.visibilityState==="visible")recoverLive()});
 // Resume is invoked directly in the button event, before microphone permission awaits.
 function unlockAudio(ctx){
@@ -562,14 +684,14 @@ function resumeLiveAudio(){
   try{unlockAudio(ctx).then(()=>{rtError=ctx.state==="running"?"":"音声が停止中です。もう一度「音声を再開」を押してください";renderConnection()}).catch(e=>{rtError="音声再開エラー："+(e.message||e);renderConnection()})}catch(e){rtError="音声再開エラー："+(e.message||e);renderConnection()}
 }
 const cnt=()=>{const n=Date.now();let c=0;peers.forEach(v=>{if(v.on&&n-v.t<9000&&(!v.sid||v.sid===myLive?.sid))c++});return c};
-const sendPresence=()=>rsend(ctl({t:"l",addr:me(),on:lst?1:0,sid:live?.sid||0}));
+const sendPresence=()=>{rsend(ctl({t:"l",addr:me(),on:lst?1:0,sid:live?.sid||0}));sendPseudoPresence()};
 joinRT();
 function onRT(d){
   if(!(d instanceof Uint8Array))d=new Uint8Array(d);
   if(!d.length)return;lastRT=Date.now();rtCount++;
-  if(d[0]===3){receiveCameraFrame(d);return}
+  if(d[0]===3){if(live?.protocol!==1||live.transport==="rt")receiveCameraFrame(d);return}
   if(d[0]===1){ /* 音声パケット */
-    if(!lst||!live||d.length!==2011||d[9]>88)return;
+    if(!lst||!live||!can(live.addr,Infinity)||live.ending||(live.protocol===1&&live.transport!=="rt")||d.length!==2011||d[9]>88)return;
     if(new DataView(d.buffer,d.byteOffset,d.byteLength).getUint32(1)!==live.sid)return;
     const packetSeq=new DataView(d.buffer,d.byteOffset,d.byteLength).getUint16(5);
     if(lst.lastSeq!==null){const delta=(packetSeq-lst.lastSeq+65536)%65536;if(delta===0||delta>32768)return}
@@ -579,18 +701,20 @@ function onRT(d){
     const sc=c.createBufferSource();sc.buffer=b;sc.connect(lst.gain);
     if(lst.nextT>c.currentTime+2)return;
     if(lst.nextT<c.currentTime+0.05)lst.nextT=c.currentTime+0.4; /* 0.4秒の余裕を持たせて再生 */
-    sc.start(lst.nextT);lst.nextT+=b.duration;return}
+    if(!lst.sources)lst.sources=new Set();const listener=lst;listener.sources.add(sc);sc.onended=()=>listener.sources.delete(sc);sc.start(lst.nextT);lst.nextT+=b.duration;return}
   if(d[0]!==2)return;let m;try{m=JSON.parse(TD.decode(d.subarray(1)))}catch(e){return}
   if(!m||typeof m!=="object")return;
+  if(m.t==="route-ack"){receiveRouteAck(m);return}
   if(m.t==="comment"||m.t==="comment-ack"){receiveFeedback(m);return}
   if(m.t==="l")peers.set(m.addr,{on:m.on,sid:m.sid,t:Date.now()});
   else if(m.t==="b"){
     if(m.addr===me())return;
+    if(m.protocol===1){if(acceptLiveRoute(m)&&typeof m.probe==="string"&&m.probe.length<100)rsend(ctl({t:"route-ack",sid:m.sid,to:m.addr,addr:me(),on:!!lst,token:m.probe}));renderLive();return}
     if(!can(m.addr,Infinity)){rtError="ライブの案内を受信しましたが、配信者の許可情報が確認できません。オーナー側の設定反映を確認してください";renderConnection();return} /* 配信者として許可された人のライブだけ */
     if(!live||live.sid===m.sid||Date.now()-live.last>TTL){
       if(!live||live.sid!==m.sid)stopListen();
       live={sid:m.sid,addr:m.addr,name:m.name,title:m.title,n:m.n,camera:m.camera===true,last:Date.now()}}}
-  else if(m.t==="e"){if(live&&live.sid===m.sid){stopListen();live=null}}
+  else if(m.t==="e"){if(live&&(live.protocol!==1||live.transport==="rt")&&live.sid===m.sid){stopListen();live=null}}
   renderLive();
 }
 function startListen(){const AC=window.AudioContext||window.webkitAudioContext;if(!AC||lst)return;audio.pause();video.pause();videoPrev.pause();$("#prev").pause();
@@ -601,11 +725,11 @@ function startListen(){const AC=window.AudioContext||window.webkitAudioContext;i
     sendPresence();
   }catch(e){if(ctx)Promise.resolve(ctx.close()).catch(()=>{});rtError="音声再生を開始できません："+(e.message||e)}renderConnection();
 }
-function stopListen(){if(lst){const L=lst;lst=null;clearLivePicture(L);try{L.ctx.close()}catch(e){}sendPresence()}renderLiveVideo();renderFeedback()}
+function stopListen(){if(lst){const L=lst;resetLivePlayback();lst=null;clearLivePicture(L);try{L.ctx.close()}catch(e){}sendPresence()}renderLiveVideo();renderFeedback()}
 function renderFeedback(){
   const key=myLive?"own:"+myLive.sid:live&&lst?live.addr+":"+live.sid:"";
   if(key!==feedbackKey){feedbackKey=key;feedbackPending=null;feedbackStatus="";feedbackLastSent=0;feedbackMessages.length=0;feedbackSeen.clear();feedbackRates.clear();$("#feedback-text").value=""}
-  $("#live-feedback").hidden=!key;$("#feedback-form").hidden=!key||!!myLive;$("#feedback-inbox").hidden=!myLive;
+  $("#live-feedback").hidden=!key||(myLive?.transport==="chat"||live?.transport==="chat");$("#feedback-form").hidden=!key||!!myLive;$("#feedback-inbox").hidden=!myLive;
   if(feedbackPending&&Date.now()-feedbackPending.at>10000)feedbackStatus="到着を確認できません。通信状況を確認してください（届いている場合もあります）。";
   $("#feedback-status").textContent=feedbackStatus;
   const disabled=!!feedbackPending&&Date.now()-feedbackPending.at<10000||Date.now()-feedbackLastSent<3000;
@@ -643,9 +767,9 @@ function receiveFeedback(m){
 }
 function renderLive(){
   let h="",meta="";
-  if(myLive){meta=`${fmt((Date.now()-myLive.t0)/1000)}・👥 ${cnt()}人が聴取操作中・音声送出 ${myLive.frames}件`;
+  if(myLive){meta=`${fmt((Date.now()-myLive.t0)/1000)}・${routeLabel(myLive.transport||"rt")}・音声処理 ${myLive.frames}コマ${myLive.transport==="chat"?"・送信 "+myLive.batches+"通":"・👥 "+cnt()+"人が聴取操作中"}`;
     h=`<div class="card live"><span class="badge">LIVE</span><div class="live-info"><div class="t">${myLive.camera?"動画LIVE（実験）配信中：":"配信中："}${esc(myLive.title)}</div><div class="m" id="lm"></div></div><div class="live-actions">${myLive.camera?`<button class="del" data-lv="camera-resume">映像を再開</button>`:""}<button class="del" data-lv="resume">音声を再開</button><button class="del ${myLive.muted?"arm":""}" data-lv="mute">${myLive.muted?"🔇 ミュート中":"🎤 ミュート"}</button><button class="del arm" data-lv="end">終了</button></div></div>`}
-  else if(live){meta=`👥 ${live.n||0}人が視聴操作中${lst?"":live.camera?"・▶で見る":"・▶で聴く"}`;
+  else if(live){meta=`${live.ending?"配信終了・残りの音声を再生中":routeLabel(live.transport||"rt")}${lst?"":live.camera?"・▶で見る":"・▶で聴く"}`;
     h=`<div class="card live"><span class="badge">LIVE</span><div class="live-info"><div class="t">${live.camera?"動画LIVE（実験） ":""}${esc(live.name)}：${esc(live.title)}</div><div class="m" id="lm"></div></div><div class="live-actions">${lst?`<button class="del" data-lv="resume">音声を再開</button><button class="del" data-lv="vol">${lst.muted?"🔇 ミュート中":"🔊 音声"}</button><button class="del arm" data-lv="stop">停止</button>`:`<button class="pb" style="width:44px;height:44px;font-size:16px" data-lv="listen" aria-label="${live.camera?"動画LIVEを見る":"ライブを聴く"}">▶</button>`}</div></div>`}
   if(h!==liveHtml){liveHtml=h;$("#live").innerHTML=h}
   if($("#lm"))$("#lm").textContent=meta;renderConnection();renderLiveVideo();renderFeedback();
@@ -655,18 +779,18 @@ $("#live").onclick=e=>{const b=e.target.closest("[data-lv]");if(!b)return;const 
   else if(a==="vol"&&lst){lst.muted=!lst.muted;lst.gain.gain.value=lst.muted?0:1}
   else if(a==="mute"&&myLive){myLive.muted=!myLive.muted;myLive.stream.getAudioTracks().forEach(t=>t.enabled=!myLive.muted)}
   else if(a==="end")endLive();renderLive()};
-$("#golive").onclick=()=>{$("#lerr").textContent=rt?"":"このDelta Chatではライブ（リアルタイム通信）が使えません。録音配信をご利用ください。";$("#sheet3").classList.add("show")};
+$("#golive").onclick=()=>{$("#lerr").textContent="";$("#sheet3").classList.add("show")};
 $("#lclose").onclick=()=>$("#sheet3").classList.remove("show");
 $("#lstart").onclick=async()=>{
   const err=m=>$("#lerr").textContent=m,title=$("#ltitle").value.trim()||"ライブ放送",name=webxdc.selfName||"だれか";
   if(liveStarting||archiveBusy)return;
-  if(!rt)return err("このDelta Chatではライブ（リアルタイム通信）が使えません。");
+  const policy=$("#live-transport").value||"auto";if(policy==="rt"&&!rt)return err("リアルタイム通信が使えません。自動またはチャット経由を選んでください。");
   if(!can(me(),Infinity))return err("配信する権限がありません。");
   if(myLive||(live&&live.addr!==me()))return err(live?`${live.name}さんがライブ中です。`:"すでに配信中です。");
   const AC=window.AudioContext||window.webkitAudioContext;
-  const useCamera=$("#live-mode").value==="video";
+  const useCamera=$("#live-mode").value==="video";const capacity=pseudoCapacity(useCamera);if(policy!=="rt"&&(capacity<4||liveInterval()>30000))return err("この端末の送信容量・間隔では疑似LIVEに対応できません。リアルタイム固定か収録配信をご利用ください。");
   if(!AC||!navigator.mediaDevices?.getUserMedia)return err("この端末ではマイク配信に対応していません。音声ファイル配信をご利用ください。");
-  liveStarting=true;$("#lstart").disabled=true;$("#lclose").disabled=true;$("#live-mode").disabled=true;$("#camera-facing").disabled=true;
+  liveStarting=true;$("#live-transport").disabled=true;$("#lstart").disabled=true;$("#lclose").disabled=true;$("#live-mode").disabled=true;$("#camera-facing").disabled=true;
   let stream,cctx,src,proc;
   try{
     cctx=new AC();const resumed=unlockAudio(cctx);resumed.catch(()=>{});
@@ -680,30 +804,31 @@ $("#lstart").onclick=async()=>{
   proc.onaudioprocess=e=>{const d=e.inputBuffer.getChannelData(0);
     for(let i=0;i<d.length;i++){acc+=d[i];n++;ph+=SR;if(ph>=sr){ph-=sr;out.push(acc/n);acc=0;n=0}} /* 16kHzへ間引き */
     while(out.length>=FR){const s=new Int16Array(FR);for(let i=0;i<FR;i++)s[i]=cl(Math.round(out[i]*32767),-32768,32767);out=out.slice(FR);
-      const enc=adEnc(s),p=new Uint8Array(7+enc.length),dv=new DataView(p.buffer);p[0]=1;dv.setUint32(1,sid);dv.setUint16(5,sq++&65535);p.set(enc,7);if(rsend(p)&&myLive?.sid===sid)myLive.frames++}};
+      const L=myLive;if(!L||L.sid!==sid||!can(me(),Infinity))return;const q=sq++,enc=adEnc(s);if(L.transport==="chat"){queuePseudoAudio(L,enc,q);L.frames++}else{const p=new Uint8Array(7+enc.length),dv=new DataView(p.buffer);p[0]=1;dv.setUint32(1,sid);dv.setUint16(5,q&65535);p.set(enc,7);if(rsend(p))L.frames++}}};
   src.connect(proc);proc.connect(cctx.destination);
   let canvas=null,canvasContext=null;
   if(useCamera){canvas=document.createElement("canvas");canvasContext=canvas.getContext("2d");if(!canvasContext||typeof canvas.toBlob!=="function")throw Error("この端末はカメラ映像の配信処理に対応していません")}
   myLive={sid,title,name,t0:Date.now(),muted:false,stream,cctx,proc,src,frames:0,camera:useCamera,videoFrames:0,videoSequence:0,videoTimer:0,frameBusy:false,canvas,canvasContext,videoError:""};
+  Object.assign(myLive,{protocol:1,policy,transport:policy==="rt"?"rt":"chat",epoch:0,maxFrames:capacity,targetFrames:Math.max(1,Math.min(capacity,Math.ceil(Math.max(2000,liveInterval())/250))),batchMs:Math.max(2000,liveInterval()),pendingAudio:[],pendingPicture:null,batches:0,sentBytes:0,dropped:0,sendErrors:0,probes:new Map(),lastRouteAt:Date.now()});liveReceipts.clear();startPseudoPump(myLive);
   if(useCamera){cameraPreview.srcObject=stream;cameraPreview.muted=true;resumeCamera()}
-  Promise.resolve(sendUpdate({payload:{k:"live",sid,addr:me(),name,title,camera:useCamera,ts:Date.now()}},`🔴 ${name}さんのライブ配信が始まりました：${title}`,()=>can(me(),Infinity)&&myLive?.sid===sid)).catch(()=>{});
-  rsend(ctl({t:"b",sid,addr:me(),name,title,n:0,camera:useCamera}));
+  Promise.resolve(sendUpdate({payload:{k:"live",...liveEnvelope(myLive)}},`🔴 ${name}さんのライブ配信が始まりました：${title}`,()=>can(me(),Infinity)&&myLive?.sid===sid)).catch(()=>{});
+  liveHeartbeat();
   $("#sheet3").classList.remove("show");if(lst)stopListen();renderLive();
   }catch(e){
     try{proc?.disconnect();src?.disconnect()}catch(_){}
     stream?.getTracks().forEach(t=>t.stop());if(cctx)Promise.resolve(cctx.close()).catch(()=>{});
     cameraPreview.pause();cameraPreview.srcObject=null;
     err("ライブ開始に失敗しました："+mediaFailure(e)+(useCamera?"。カメラとマイクの利用許可・本体側の対応を確認し、音声LIVEでもお試しください。":""));
-  }finally{liveStarting=false;$("#lstart").disabled=false;$("#lclose").disabled=false;$("#live-mode").disabled=false;$("#camera-facing").disabled=false}
+  }finally{liveStarting=false;$("#live-transport").disabled=false;$("#lstart").disabled=false;$("#lclose").disabled=false;$("#live-mode").disabled=false;$("#camera-facing").disabled=false}
 };
-function endLive(){const L=myLive;if(!L)return;myLive=null;
+function endLive(){const L=myLive;if(!L)return;myLive=null;const tail=L.protocol===1?finishPseudo(L):Promise.resolve();
   clearTimeout(L.videoTimer);if(L.camera){cameraPreview.pause();cameraPreview.srcObject=null;if(L.canvas){L.canvas.width=1;L.canvas.height=1}}
   for(const clean of [()=>L.proc.disconnect(),()=>L.src.disconnect(),()=>L.cctx.close(),()=>L.stream.getTracks().forEach(t=>t.stop())])try{clean()}catch(e){}
   [0,300,700].forEach(ms=>setTimeout(()=>rsend(ctl({t:"e",sid:L.sid})),ms)); /* 取りこぼし対策で3回送る */
-  Promise.resolve(sendUpdate({payload:{k:"liveend",sid:L.sid,addr:me(),name:L.name,title:L.title,ts:Date.now()}},`⚫ ${L.name||webxdc.selfName||"だれか"}さんのライブ配信が終了しました：${L.title}`)).catch(()=>{rtError="ライブは終了しましたが、チャットへの終了通知を送信できませんでした。必要に応じてチャットで終了を伝えてください";renderConnection()});renderLive()}
+  const notify=()=>sendUpdate({payload:{k:"liveend",sid:L.sid,addr:me(),name:L.name,title:L.title,ts:Date.now()}},`⚫ ${L.name||webxdc.selfName||"だれか"}さんのライブ配信が終了しました：${L.title}`);Promise.resolve(L.protocol===1?tail.then(notify):notify()).catch(()=>{rtError="ライブは終了しましたが、チャットへの終了通知を送信できませんでした。必要に応じてチャットで終了を伝えてください";renderConnection()});renderLive()}
 addEventListener("pagehide",endLive);
-setInterval(()=>{if(live&&Date.now()-live.last>TTL){stopListen();live=null}
-  if(myLive)rsend(ctl({t:"b",sid:myLive.sid,addr:me(),name:webxdc.selfName||"だれか",title:myLive.title,n:cnt(),camera:myLive.camera}));
+setInterval(()=>{autoLiveTransport();sendPseudoPresence();if(live&&!live.ending&&Date.now()-live.last>liveTTL()){stopListen();live=null}
+  if(myLive)liveHeartbeat();
   if(tickN++%3===0)sendPresence();renderLive()},1000);
 
 function mediaFailure(e){
@@ -964,4 +1089,5 @@ $("#archive-import").onclick=async()=>{
 };
 $("#archive-file").onchange=e=>{const file=e.target.files[0];e.target.value="";if(file)restoreArchive(file)};
 render();
+liveBooted=true;
 </script></body></html>
